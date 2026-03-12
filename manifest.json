@@ -1,0 +1,12 @@
+{
+  "version": "1",
+  "apps": [
+    {
+      "name": "Tetris",
+      "version": "1.0.0",
+      "description": "Standalone Tetris - landscape ILI9341 320x240",
+      "file": "apps/tetris_game.bin",
+      "size": 276304
+    }
+  ]
+}

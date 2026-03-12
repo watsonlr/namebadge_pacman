@@ -1,0 +1,31 @@
+# sdkconfig.defaults for namebadge_frogger
+# Target: BYUI e-Badge V3.0 (ESP32-S3-Mini-1-N4R2)
+
+# Target chip
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash: 4MB, QIO, 80MHz
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# Use our custom partition table (no OTA slots)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Console UART baud rate
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
+
+# FreeRTOS tick rate (1 ms resolution)
+CONFIG_FREERTOS_HZ=1000
+
+# Main task stack – game + LCD driver need headroom
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# 2MB embedded PSRAM (AP_3v3) is present but not enabled — enable CONFIG_SPIRAM if needed
+CONFIG_SPIRAM=n
+
+# Default log level
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_DEFAULT_LEVEL=3
