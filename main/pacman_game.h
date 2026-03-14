@@ -25,8 +25,8 @@
 // ── Button GPIOs (BYUI e-Badge V3.0) ─────────────────────────────────────────
 #define BTN_UP     17
 #define BTN_DOWN   16
-#define BTN_LEFT   14
-#define BTN_RIGHT  15
+#define BTN_LEFT   15
+#define BTN_RIGHT  14
 #define BTN_A      38
 #define BTN_B      18
 
