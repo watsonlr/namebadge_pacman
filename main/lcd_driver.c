@@ -211,7 +211,8 @@ esp_err_t lcd_init(void) {
     { uint8_t d = 0x55; lcd_data_bytes(&d, 1); }
 
 
-    // Landscape: MV=1, MY=1, BGR=1 (0xA8) — MY+MX toggled for correct orientation
+    // Landscape: MY=1, MX=0, MV=1, BGR=1 (0xA8)
+    // MY=1 + MV=1 → x=0 at physical RIGHT edge (compensated by tile_px mirror)
     lcd_cmd(CMD_MADCTL);
     { uint8_t d = 0xA8; lcd_data_bytes(&d, 1); }
 

@@ -32,11 +32,11 @@
 | IO11 | SPI2 MOSI | Shared: display + SD |
 | IO12 | SPI2 CLK | Shared: display + SD |
 | IO13 | Display DC | Data / Command select |
-| IO14 | Button Left | Active LOW, pull-up |
-| IO15 | Button Right | Active LOW, pull-up |
-| IO16 | Button Down | Active LOW, pull-up |
-| IO17 | Button Up | Active LOW, pull-up |
-| IO18 | Button B | Active LOW, pull-up |
+| IO14 | Button Left | Active HIGH, external pull-down |
+| IO15 | Button Right | Active HIGH, external pull-down |
+| IO16 | Button Down | Active HIGH, external pull-down |
+| IO17 | Button Up | Active HIGH, external pull-down |
+| IO18 | Button B | Active HIGH, external pull-down |
 | IO19 | USB D- | Native USB |
 | IO20 | USB D+ | Native USB |
 | IO21 | I2C SCL | Accelerometer clock |

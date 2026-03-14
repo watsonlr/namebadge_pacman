@@ -422,10 +422,12 @@ void pacman_reset(void) {
 
 // ── Input ─────────────────────────────────────────────────────────────────────
 static void input_init(void) {
+    // Buttons are active-HIGH: GPIO reads 1 when pressed (button ties to 3.3V),
+    // external pull-downs hold the line LOW when idle.
     for (int i = 0; i < 6; i++) {
         gpio_reset_pin(BTN_GPIOS[i]);
         gpio_set_direction(BTN_GPIOS[i], GPIO_MODE_INPUT);
-        gpio_set_pull_mode(BTN_GPIOS[i], GPIO_PULLUP_ONLY);
+        gpio_set_pull_mode(BTN_GPIOS[i], GPIO_PULLDOWN_ONLY);
         btn_state[i] = btn_prev[i] = btn_edge[i] = false;
     }
 }
@@ -433,7 +435,7 @@ static void input_init(void) {
 static void handle_input(void) {
     for (int i = 0; i < 6; i++) {
         btn_prev[i]  = btn_state[i];
-        btn_state[i] = (gpio_get_level(BTN_GPIOS[i]) == 0);
+        btn_state[i] = (gpio_get_level(BTN_GPIOS[i]) == 1);  // active-HIGH
         btn_edge[i]  = btn_state[i] && !btn_prev[i];
     }
 }
