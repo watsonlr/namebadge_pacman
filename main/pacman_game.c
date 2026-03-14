@@ -44,6 +44,7 @@ static Dir dir_opposite(Dir d) {
 // ── Ghost modes ───────────────────────────────────────────────────────────────
 typedef enum {
     GMODE_HOUSE = 0,
+    GMODE_LEAVING,      // exiting ghost house — can pass TILE_DOOR
     GMODE_CHASE,
     GMODE_SCATTER,
     GMODE_FRIGHTENED,
@@ -201,7 +202,7 @@ static bool ghost_can_enter(int col, int row, GhostMode mode) {
     if (!in_bounds(col, row)) return false;
     uint8_t t = maze[row][col];
     if (t == TILE_WALL) return false;
-    if (t == TILE_DOOR && mode != GMODE_EATEN && mode != GMODE_HOUSE) return false;
+    if (t == TILE_DOOR && mode != GMODE_EATEN && mode != GMODE_HOUSE && mode != GMODE_LEAVING) return false;
     return true;
 }
 
@@ -474,6 +475,7 @@ static Dir ghost_choose_random(Ghost *g) {
 }
 
 static void ghost_get_target(Ghost *g, int *tc, int *tr) {
+    if (g->mode == GMODE_LEAVING) { *tc = 13; *tr = 11; return; }
     if (g->mode == GMODE_SCATTER || g->mode == GMODE_HOUSE) {
         *tc = g->scatter_col; *tr = g->scatter_row; return;
     }
@@ -512,9 +514,16 @@ static void move_ghost(Ghost *g) {
                 g->move_timer = GHOST_MOVE_INTERVAL;
             }
         } else {
-            g->mode = GMODE_SCATTER;
+            g->mode = GMODE_LEAVING;
             g->dir  = DIR_UP;
         }
+        return;
+    }
+
+    // Ghost has exited the house — switch to active play mode
+    if (g->mode == GMODE_LEAVING && g->row <= 11) {
+        g->mode = (g_frightened_timer > 0) ? GMODE_FRIGHTENED
+                : (g_scatter_phase ? GMODE_SCATTER : GMODE_CHASE);
         return;
     }
 
