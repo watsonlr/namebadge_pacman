@@ -1,6 +1,6 @@
 /**
  * @file pacman_game.h
- * @brief Classic Pac-Man for BYUI e-Badge V3.0 (ESP32-S3-Mini-1-N4R2)
+ * @brief Classic Pac-Man for BYUI e-Badge V4.0 (ESP32-S3-Mini-1-N8)
  *
  * Hardware: ILI9341 320×240 LCD (landscape), 6-button input
  *
@@ -22,13 +22,13 @@
 #include <stdbool.h>
 #include "esp_err.h"
 
-// ── Button GPIOs (BYUI e-Badge V3.0) ─────────────────────────────────────────
-#define BTN_UP     17
-#define BTN_DOWN   16
-#define BTN_LEFT   15
-#define BTN_RIGHT  14
-#define BTN_A      38
-#define BTN_B      18
+// ── Button GPIOs (BYUI e-Badge V4.0) — active LOW, internal pull-up ──────────
+#define BTN_UP     11
+#define BTN_DOWN   47
+#define BTN_LEFT   21
+#define BTN_RIGHT  10
+#define BTN_A      34
+#define BTN_B      33
 
 // ── Screen geometry ───────────────────────────────────────────────────────────
 #define SCREEN_W    320

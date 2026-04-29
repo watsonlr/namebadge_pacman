@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# publish.sh — copy tetris_game.bin to the org Pages repo and push
+# publish.sh — copy pacman_game.bin to the org Pages repo and push
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BIN="${SCRIPT_DIR}/build/tetris_game.bin"
+BIN="${SCRIPT_DIR}/build/pacman_game.bin"
 PAGES_REPO="${HOME}/Documents/Repositories/byu-i-ebadge.github.io"
 DEST="${PAGES_REPO}/apps"
 
@@ -22,20 +22,20 @@ fi
 
 # ── Copy ─────────────────────────────────────────────────────────────────────
 mkdir -p "${DEST}"
-cp "${BIN}" "${DEST}/tetris_game.bin"
-echo "Copied tetris_game.bin → ${DEST}/"
+cp "${BIN}" "${DEST}/pacman.bin"
+echo "Copied pacman_game.bin → ${DEST}/pacman.bin"
 
 # ── Commit & push ─────────────────────────────────────────────────────────────
 cd "${PAGES_REPO}"
 
-if git diff --quiet --cached && git diff --quiet apps/tetris_game.bin; then
+if git diff --quiet --cached && git diff --quiet apps/pacman.bin; then
     echo "No changes — binary is identical to what's already committed."
     exit 0
 fi
 
-git add apps/tetris_game.bin
-git commit -m "Update tetris_game.bin ($(date '+%Y-%m-%d %H:%M'))"
+git add apps/pacman.bin
+git commit -m "Update pacman.bin ($(date '+%Y-%m-%d %H:%M'))"
 git push
 
 echo ""
-echo "Done. Live at: https://byu-i-ebadge.github.io/apps/tetris_game.bin"
+echo "Done. Live at: https://byu-i-ebadge.github.io/apps/pacman.bin"

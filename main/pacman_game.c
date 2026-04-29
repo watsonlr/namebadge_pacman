@@ -1,10 +1,11 @@
 /**
  * @file pacman_game.c
- * @brief Classic Pac-Man — BYUI e-Badge V3.0
+ * @brief Classic Pac-Man — BYUI e-Badge V4.0
  *
  * Maze: 28×28 tiles, 8×8 px each.
- * MADCTL=0xA8 on ILI9341 means physical x=0 is the RIGHT edge of the screen,
- * so tile_px() mirrors the column coordinate to compensate.
+ * MADCTL=0x40 on ILI9341 means physical x=0 is the RIGHT edge of the screen
+ * (MX=1 mirrors the column address order), so tile_px() mirrors the column
+ * coordinate to compensate.
  * Movement: tile-based (one step per MOVE_INTERVAL frames).
  */
 
@@ -15,6 +16,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "driver/gpio.h"
+#include "esp_adc/adc_oneshot.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -155,6 +157,13 @@ static bool       btn_prev[6];
 static bool       btn_edge[6];
 static const int  BTN_GPIOS[6] = { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B };
 
+// Joystick ADC
+static adc_oneshot_unit_handle_t s_adc1;
+#define JOY_X_CH  ADC_CHANNEL_7   // GPIO 8
+#define JOY_Y_CH  ADC_CHANNEL_8   // GPIO 9
+#define JOY_LOW   1500
+#define JOY_HIGH  2500
+
 #define BI_UP    0
 #define BI_DOWN  1
 #define BI_LEFT  2
@@ -163,7 +172,7 @@ static const int  BTN_GPIOS[6] = { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A,
 #define BI_B     5
 
 // ── Coordinate helpers ────────────────────────────────────────────────────────
-// MADCTL=0xA8 mirrors the x-axis (x=0 is physical RIGHT edge).
+// MADCTL=0x40 (MX=1) mirrors the x-axis (x=0 is physical RIGHT edge).
 // Flip column so col=0 renders on the physical LEFT and RIGHT button moves right.
 static inline int tile_px(int col) {
     return SCREEN_W - MAZE_X - (col + 1) * TILE_SIZE;
@@ -316,14 +325,27 @@ static void erase_entity(int col, int row) {
 }
 
 // ── HUD — bottom 16-px strip only (no side panels — avoids per-frame floods) ─
+static void draw_life_icon(int x, int y, uint16_t color) {
+    lcd_fill_rect(x+2, y+0, 4, 1, color);
+    lcd_fill_rect(x+1, y+1, 6, 2, color);
+    lcd_fill_rect(x+0, y+3, 8, 2, color);
+    lcd_fill_rect(x+1, y+5, 6, 2, color);
+    lcd_fill_rect(x+2, y+7, 4, 1, color);
+}
+
+static void draw_lives_panel(void) {
+    lcd_fill_rect(0, 164, 48, 60, COLOR_BLACK);
+    for (int i = 0; i < g_lives && i < 5; i++)
+        draw_life_icon(20, 170 + i * 12, COLOR_YELLOW);
+}
+
 static void draw_hud(void) {
     char buf[48];
     lcd_fill_rect(0, HUD_Y, SCREEN_W, HUD_H, COLOR_BLACK);
     snprintf(buf, sizeof(buf), "SC:%05d  LV:%d  LF:%d  HI:%05d",
              g_score, g_level, g_lives, g_hiscore);
-    // x=4 is fine — on this display the text may appear mirrored but the
-    // numbers are the most important part and change visibly as score grows.
     lcd_draw_string(4, HUD_Y + 4, buf, COLOR_WHITE, COLOR_BLACK);
+    draw_lives_panel();
     prev_score = g_score;
     prev_lives = g_lives;
     prev_level = g_level;
@@ -332,19 +354,21 @@ static void draw_hud(void) {
 
 // ── Title screen ──────────────────────────────────────────────────────────────
 static void draw_title(void) {
+    // 2x font: each char 16×16px. Screen 320×240.
+    // Centered widths: 13ch=208, 14ch=224, 16ch=256, 9ch=144, 15ch=240
     lcd_fill_screen(COLOR_BLACK);
-    lcd_draw_string( 80, 70,  "P A C - M A N",  COLOR_YELLOW, COLOR_BLACK);
-    lcd_draw_string( 88, 90,  "namebadge v1.0", COLOR_WHITE,  COLOR_BLACK);
-    lcd_draw_string( 72, 130, "UP/DN/LT/RT move",COLOR_CYAN,  COLOR_BLACK);
-    lcd_draw_string( 72, 142, "A = start",        COLOR_GREEN, COLOR_BLACK);
-    lcd_draw_string( 72, 154, "B = pause",        COLOR_GREEN, COLOR_BLACK);
-    lcd_draw_string( 80, 180, "PRESS A TO PLAY", COLOR_YELLOW, COLOR_BLACK);
+    lcd_draw_string_2x( 56,  10, "P A C - M A N",  COLOR_YELLOW, COLOR_BLACK);
+    lcd_draw_string_2x( 48,  32, "namebadge v1.0",  COLOR_WHITE,  COLOR_BLACK);
+    lcd_draw_string_2x( 40,  66, "Joystick to move", COLOR_CYAN,  COLOR_BLACK);
+    lcd_draw_string_2x( 88,  90, "A = start",        COLOR_GREEN, COLOR_BLACK);
+    lcd_draw_string_2x( 88, 112, "B = pause",        COLOR_GREEN, COLOR_BLACK);
+    lcd_draw_string_2x( 40, 172, "PRESS A TO START", COLOR_YELLOW, COLOR_BLACK);
 
     // Decorative ghost row
     static const uint16_t gc[4] = { COLOR_RED, COLOR_PINK, COLOR_CYAN, COLOR_ORANGE };
     for (int i = 0; i < 4; i++) {
         int gx = 80 + i * 40;
-        int gy = 210;
+        int gy = 148;
         lcd_fill_rect(gx+1, gy+0, 6, 1, gc[i]);
         lcd_fill_rect(gx+0, gy+1, 8, 5, gc[i]);
         lcd_fill_rect(gx+0, gy+6, 2, 2, gc[i]);
@@ -356,16 +380,36 @@ static void draw_title(void) {
 }
 
 static void draw_ready_msg(void) {
-    lcd_draw_string(120, 112, " READY! ", COLOR_YELLOW, COLOR_BLACK);
+    lcd_draw_string_2x(96, 104, " READY! ", COLOR_YELLOW, COLOR_BLACK);
 }
 
 static void clear_ready_msg(void) {
-    lcd_draw_string(120, 112, " READY! ", COLOR_BLACK, COLOR_BLACK);
+    lcd_fill_rect(48, 104, 224, 16, COLOR_BLACK);
 }
 
 static void draw_game_over_msg(void) {
-    lcd_draw_string(112, 104, " GAME OVER ", COLOR_RED,   COLOR_BLACK);
-    lcd_draw_string(104, 120, "  PRESS A   ", COLOR_WHITE, COLOR_BLACK);
+    lcd_draw_string_2x(88, 100, "GAME OVER", COLOR_RED,   COLOR_BLACK);
+    lcd_draw_string_2x(88, 120, " PRESS A ", COLOR_WHITE, COLOR_BLACK);
+}
+
+static void draw_paused_msg(void) {
+    lcd_draw_string_2x(96, 104, " PAUSED ", COLOR_YELLOW, COLOR_BLACK);
+}
+
+static void clear_paused_msg(void) {
+    lcd_fill_rect(96, 104, 128, 16, COLOR_BLACK);
+}
+
+static void draw_lives_left_msg(void) {
+    char buf[16];
+    snprintf(buf, sizeof(buf), g_lives == 1 ? "1 LIFE LEFT" : "%d LIVES LEFT", g_lives);
+    int w = (int)strlen(buf) * 16;
+    int x = 160 - w / 2;
+    lcd_draw_string_2x(x, 104, buf, COLOR_CYAN, COLOR_BLACK);
+}
+
+static void clear_lives_left_msg(void) {
+    lcd_fill_rect(48, 104, 224, 16, COLOR_BLACK);
 }
 
 // ── Ghost init ────────────────────────────────────────────────────────────────
@@ -423,22 +467,46 @@ void pacman_reset(void) {
 
 // ── Input ─────────────────────────────────────────────────────────────────────
 static void input_init(void) {
-    // Buttons are active-HIGH: GPIO reads 1 when pressed (button ties to 3.3V),
-    // external pull-downs hold the line LOW when idle.
-    for (int i = 0; i < 6; i++) {
-        gpio_reset_pin(BTN_GPIOS[i]);
-        gpio_set_direction(BTN_GPIOS[i], GPIO_MODE_INPUT);
-        gpio_set_pull_mode(BTN_GPIOS[i], GPIO_PULLDOWN_ONLY);
-        btn_state[i] = btn_prev[i] = btn_edge[i] = false;
+    // A and B buttons only: active-LOW, internal pull-up
+    gpio_config_t io = {
+        .pin_bit_mask = (1ULL << BTN_A) | (1ULL << BTN_B),
+        .mode         = GPIO_MODE_INPUT,
+        .pull_up_en   = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type    = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io);
+    // Let pull-ups settle, then prime prev state so startup level isn't an edge
+    vTaskDelay(pdMS_TO_TICKS(100));
+    for (int i = 4; i < 6; i++) {
+        btn_state[i] = btn_prev[i] = (gpio_get_level(BTN_GPIOS[i]) == 0);
+        btn_edge[i] = false;
     }
+    // Joystick: ADC1 CH7 = GPIO 8 (X), CH8 = GPIO 9 (Y)
+    adc_oneshot_unit_init_cfg_t unit_cfg = { .unit_id = ADC_UNIT_1 };
+    adc_oneshot_new_unit(&unit_cfg, &s_adc1);
+    adc_oneshot_chan_cfg_t chan_cfg = { .atten = ADC_ATTEN_DB_12, .bitwidth = ADC_BITWIDTH_DEFAULT };
+    adc_oneshot_config_channel(s_adc1, JOY_X_CH, &chan_cfg);
+    adc_oneshot_config_channel(s_adc1, JOY_Y_CH, &chan_cfg);
 }
 
 static void handle_input(void) {
-    for (int i = 0; i < 6; i++) {
+    // A/B buttons
+    for (int i = 4; i < 6; i++) {
         btn_prev[i]  = btn_state[i];
-        btn_state[i] = (gpio_get_level(BTN_GPIOS[i]) == 1);  // active-HIGH
+        btn_state[i] = (gpio_get_level(BTN_GPIOS[i]) == 0);
         btn_edge[i]  = btn_state[i] && !btn_prev[i];
     }
+    // Joystick → directional state
+    int raw_x = 2048, raw_y = 2048;
+    adc_oneshot_read(s_adc1, JOY_X_CH, &raw_x);
+    adc_oneshot_read(s_adc1, JOY_Y_CH, &raw_y);
+    for (int i = 0; i < 4; i++) btn_prev[i] = btn_state[i];
+    btn_state[BI_LEFT]  = (raw_x > JOY_HIGH);
+    btn_state[BI_RIGHT] = (raw_x < JOY_LOW);
+    btn_state[BI_UP]    = (raw_y > JOY_HIGH);
+    btn_state[BI_DOWN]  = (raw_y < JOY_LOW);
+    for (int i = 0; i < 4; i++) btn_edge[i] = btn_state[i] && !btn_prev[i];
 }
 
 // ── Ghost AI ──────────────────────────────────────────────────────────────────
@@ -739,6 +807,7 @@ void pacman_game_loop(void) {
             if (btn_edge[BI_A]) {
                 pacman_reset();
                 g_need_full_redraw = true;
+                lcd_fill_screen(COLOR_BLACK);
                 draw_maze();
                 draw_hud();
                 draw_ready_msg();
@@ -750,7 +819,7 @@ void pacman_game_loop(void) {
             if (g_state_timer == 0x7FFFFFFF) {
                 if (btn_edge[BI_A] || btn_edge[BI_B]) {
                     g_state = ST_PLAYING;
-                    lcd_draw_string(116, 112, " PAUSED ", COLOR_BLACK, COLOR_BLACK);
+                    clear_paused_msg();
                 }
                 break;
             }
@@ -764,7 +833,7 @@ void pacman_game_loop(void) {
             if (btn_edge[BI_B]) {
                 g_state       = ST_READY;
                 g_state_timer = 0x7FFFFFFF;
-                lcd_draw_string(116, 112, " PAUSED ", COLOR_YELLOW, COLOR_BLACK);
+                draw_paused_msg();
                 break;
             }
             update_playing();
@@ -791,7 +860,7 @@ void pacman_game_loop(void) {
                     g_need_full_redraw = true;
                     draw_maze();
                     draw_hud();
-                    draw_ready_msg();
+                    draw_lives_left_msg();
                 }
             } else {
                 render();  // flash animation

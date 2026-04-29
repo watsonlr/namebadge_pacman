@@ -1,9 +1,9 @@
 /**
  * @file lcd_driver.c
- * @brief ILI9341 LCD driver for BYUI e-Badge V3.0 (ESP32-S3-Mini-1-N4R2)
+ * @brief ILI9341 LCD driver for BYUI e-Badge V4.0 (ESP32-S3-Mini-1-N8)
  *
  * Display: ILI9341, 240x320 native, mounted landscape (FPC connector on left)
- * Interface: SPI2 @ 40 MHz
+ * Interface: SPI2 @ 40 MHz, write-only (no MISO)
  * Orientation: MADCTL 0x40 (MX=1) — landscape 320×240
  * Inversion: INVON (0x21) required — panel powers up inverted by default
  *
@@ -22,12 +22,12 @@
 #include "freertos/task.h"
 #include <string.h>
 
-// Pin assignments (BYUI e-Badge V3.0)
-#define PIN_MOSI   11
-#define PIN_CLK    12
-#define PIN_CS      9
-#define PIN_DC     13
-#define PIN_RST    48
+// Pin assignments (BYUI e-Badge V4.0)
+#define PIN_MOSI    3
+#define PIN_CLK    46
+#define PIN_CS      0
+#define PIN_DC     45
+#define PIN_RST     1
 
 // ILI9341 command codes
 #define CMD_SWRESET   0x01
@@ -211,8 +211,8 @@ esp_err_t lcd_init(void) {
     { uint8_t d = 0x55; lcd_data_bytes(&d, 1); }
 
 
-    // Landscape: MY=1, MX=0, MV=1, BGR=1 (0xA8)
-    // MY=1 + MV=1 → x=0 at physical RIGHT edge (compensated by tile_px mirror)
+    // Landscape: MY=1, MV=1, BGR=1 (0xA8) — x=0 at physical RIGHT edge
+    // (compensated by tile_px mirror in game code)
     lcd_cmd(CMD_MADCTL);
     { uint8_t d = 0xA8; lcd_data_bytes(&d, 1); }
 
@@ -325,5 +325,36 @@ void lcd_draw_string(int x, int y, const char *str, uint16_t fg, uint16_t bg) {
     while (*str) {
         lcd_draw_char(cx, y, *str++, fg, bg);
         cx += 8;
+    }
+}
+
+// Draw a single 8×8 character scaled 2× (renders as 16×16)
+static void lcd_draw_char_2x(int x, int y, char c, uint16_t fg, uint16_t bg) {
+    if (c < 32 || c > 127) c = 32;
+    int idx = c - 32;
+    uint8_t hi_fg = fg >> 8, lo_fg = fg & 0xFF;
+    uint8_t hi_bg = bg >> 8, lo_bg = bg & 0xFF;
+    uint8_t buf[512]; // 16×16 × 2 bytes
+    for (int row = 0; row < 8; row++) {
+        uint8_t bits = (idx < 96) ? font8x8[idx][row] : 0;
+        for (int col = 0; col < 8; col++) {
+            uint8_t hi = (bits & (1 << col)) ? hi_fg : hi_bg;
+            uint8_t lo = (bits & (1 << col)) ? lo_fg : lo_bg;
+            for (int dr = 0; dr < 2; dr++) {
+                int pos = ((row * 2 + dr) * 16 + col * 2) * 2;
+                buf[pos]   = hi; buf[pos+1] = lo;
+                buf[pos+2] = hi; buf[pos+3] = lo;
+            }
+        }
+    }
+    lcd_set_window((uint16_t)x, (uint16_t)y, (uint16_t)(x+15), (uint16_t)(y+15));
+    lcd_data_bytes(buf, 512);
+}
+
+void lcd_draw_string_2x(int x, int y, const char *str, uint16_t fg, uint16_t bg) {
+    int cx = x;
+    while (*str) {
+        lcd_draw_char_2x(cx, y, *str++, fg, bg);
+        cx += 16;
     }
 }

@@ -27,6 +27,7 @@ void lcd_draw_pixel(int x, int y, uint16_t color);
 void lcd_fill_rect(int x, int y, int w, int h, uint16_t color);
 void lcd_draw_rect_outline(int x, int y, int w, int h, uint16_t color);
 void lcd_draw_string(int x, int y, const char *str, uint16_t color, uint16_t bg);
+void lcd_draw_string_2x(int x, int y, const char *str, uint16_t color, uint16_t bg);
 
 // Low-level access
 void lcd_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
