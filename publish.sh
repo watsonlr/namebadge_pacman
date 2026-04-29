@@ -8,10 +8,25 @@ APP_BIN="${SCRIPT_DIR}/build/pacman_game.bin"
 BL_BIN="${SCRIPT_DIR}/build/bootloader/bootloader.bin"
 PT_BIN="${SCRIPT_DIR}/build/partition_table/partition-table.bin"
 
-PAGES_REPO="${HOME}/Documents/Repositories/byu-i-ebadge.github.io"
+GITHUB_PAGES_BASE="https://byu-i-ebadge.github.io/apps"
+
+# Locate the Pages repo — set NAMEBADGE_PAGES_REPO to override
+if [[ -z "${NAMEBADGE_PAGES_REPO:-}" ]]; then
+    SIBLING="$(cd "${SCRIPT_DIR}/.." && pwd)/byu-i-ebadge.github.io"
+    if [[ -d "${SIBLING}/.git" ]]; then
+        NAMEBADGE_PAGES_REPO="${SIBLING}"
+    fi
+fi
+if [[ -z "${NAMEBADGE_PAGES_REPO:-}" ]] || [[ ! -d "${NAMEBADGE_PAGES_REPO}/.git" ]]; then
+    echo "ERROR: Cannot find the byu-i-ebadge.github.io Pages repo."
+    echo "       Clone it, then set the env var:"
+    echo "       git clone git@github.com:BYU-I-eBadge/byu-i-ebadge.github.io.git"
+    echo "       export NAMEBADGE_PAGES_REPO=/path/to/byu-i-ebadge.github.io"
+    exit 1
+fi
+PAGES_REPO="${NAMEBADGE_PAGES_REPO}"
 DEST="${PAGES_REPO}/apps"
 MANIFEST="${DEST}/manifest.json"
-GITHUB_PAGES_BASE="https://byu-i-ebadge.github.io/apps"
 
 APP_NAME="Pacman"
 APP_DEST_NAME="pacman.bin"
