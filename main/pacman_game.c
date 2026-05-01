@@ -476,8 +476,16 @@ static void input_init(void) {
         .intr_type    = GPIO_INTR_DISABLE,
     };
     gpio_config(&io);
-    // Let pull-ups settle, then prime prev state so startup level isn't an edge
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Let pull-ups settle
+    vTaskDelay(pdMS_TO_TICKS(50));
+    // Drain any A/B press that may be held from the prior context (e.g. OTA
+    // menu confirmation).  Wait up to 1 s for both buttons to be released so
+    // the first frame of the title screen never sees a carried-over edge.
+    for (int i = 0; i < 100; i++) {
+        if (gpio_get_level(BTN_A) != 0 && gpio_get_level(BTN_B) != 0) break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    // Prime prev state with settled values so startup level is not an edge
     for (int i = 4; i < 6; i++) {
         btn_state[i] = btn_prev[i] = (gpio_get_level(BTN_GPIOS[i]) == 0);
         btn_edge[i] = false;

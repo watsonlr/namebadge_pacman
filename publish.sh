@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# publish.sh — build pacman, copy all flash binaries to the org Pages repo,
-# update manifest.json in the multi-binary format, and push.
+# publish.sh — copy Pacman flash binaries to the org Pages repo,
+# update manifest.json for both webflash (multi-binary) and OTA (single url).
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,6 +32,19 @@ APP_NAME="Pacman"
 APP_DEST_NAME="pacman.bin"
 BL_DEST_NAME="pacman_bl.bin"
 PT_DEST_NAME="pacman_pt.bin"
+ICON_DEST_NAME="pacman_icon.bin"
+
+# Locate icon — look in sibling namebadge-apps/icons/
+ICON_SRC=""
+for candidate in \
+    "${SCRIPT_DIR}/../namebadge-apps/icons/pacman_icon.bin" \
+    "${SCRIPT_DIR}/pacman_icon.bin"
+do
+    if [[ -f "$candidate" ]]; then
+        ICON_SRC="$candidate"
+        break
+    fi
+done
 
 # ── Sanity checks ────────────────────────────────────────────────────────────
 for f in "$APP_BIN" "$BL_BIN" "$PT_BIN"; do
@@ -60,9 +73,16 @@ echo "Copied ${APP_DEST_NAME}  (factory app,        0x10000)"
 echo "Copied ${BL_DEST_NAME}   (ESP-IDF bootloader, 0x1000)"
 echo "Copied ${PT_DEST_NAME}   (partition table,    0x8000)"
 
-# ── Update manifest ───────────────────────────────────────────────────────────
-APP_SIZE=$(stat -c%s "${DEST}/${APP_DEST_NAME}")
+if [[ -n "$ICON_SRC" ]]; then
+    cp "${ICON_SRC}" "${DEST}/${ICON_DEST_NAME}"
+    echo "Copied ${ICON_DEST_NAME}  (OTA tile icon)"
+fi
 
+# ── Compute sha256 and size of app binary ─────────────────────────────────────
+APP_SIZE=$(stat -c%s "${DEST}/${APP_DEST_NAME}")
+APP_SHA256=$(sha256sum "${DEST}/${APP_DEST_NAME}" | awk '{print $1}')
+
+# ── Update manifest ───────────────────────────────────────────────────────────
 python3 - <<EOF
 import json
 
@@ -76,15 +96,33 @@ except (FileNotFoundError, json.JSONDecodeError):
 if "apps" not in m:
     m["apps"] = []
 
+# Find existing version so we can bump it
+old_ver = 0
+for app in m["apps"]:
+    if app.get("name") == "${APP_NAME}":
+        old_ver = int(app.get("version", 0))
+        break
+new_ver = old_ver + 1
+
+icon_url = "${GITHUB_PAGES_BASE}/${ICON_DEST_NAME}" if "${ICON_SRC}" else ""
+
+# Entry satisfies both consumers:
+#   webflash site  → reads "binaries" (bl + pt + app at their flash addresses)
+#   badge OTA menu → reads "url" / "size" / "sha256" (app binary only, OTA slot)
 new_entry = {
     "name": "${APP_NAME}",
+    "version": new_ver,
+    "url": "${GITHUB_PAGES_BASE}/${APP_DEST_NAME}",
+    "size": ${APP_SIZE},
+    "sha256": "${APP_SHA256}",
     "binaries": [
         {"url": "${GITHUB_PAGES_BASE}/${BL_DEST_NAME}",  "address": 0x1000},
         {"url": "${GITHUB_PAGES_BASE}/${PT_DEST_NAME}",  "address": 0x8000},
         {"url": "${GITHUB_PAGES_BASE}/${APP_DEST_NAME}", "address": 0x10000},
     ],
-    "size": ${APP_SIZE},
 }
+if icon_url:
+    new_entry["icon"] = icon_url
 
 replaced = False
 for i, app in enumerate(m["apps"]):
@@ -99,7 +137,8 @@ with open(manifest_path, "w") as f:
     json.dump(m, f, indent=2)
     f.write("\n")
 
-print(f"  {'Updated' if replaced else 'Added'} ${APP_NAME} in manifest.json")
+action = "Updated" if replaced else "Added"
+print(f"  {action} ${APP_NAME} v{new_ver} in manifest.json ({${APP_SIZE}} bytes, sha256={str('${APP_SHA256}')[:16]}...)")
 EOF
 
 # ── Commit & push ─────────────────────────────────────────────────────────────
@@ -113,10 +152,12 @@ fi
 git add apps/
 git commit -m "Update Pacman ($(date '+%Y-%m-%d %H:%M'))
 
-App:        ${APP_DEST_NAME} (${APP_SIZE} bytes, 0x10000)
+App:        ${APP_DEST_NAME} (${APP_SIZE} bytes, 0x10000)  sha256=${APP_SHA256}
 Bootloader: ${BL_DEST_NAME} (0x1000)
 Partitions: ${PT_DEST_NAME} (0x8000)"
 git push
 
 echo ""
 echo "Done. Live at: ${GITHUB_PAGES_BASE}/${APP_DEST_NAME}"
+echo "  Webflash: select 'Pacman' in the Single Program Flash dropdown"
+echo "  OTA:      badge bootloader will find Pacman in the app catalog"

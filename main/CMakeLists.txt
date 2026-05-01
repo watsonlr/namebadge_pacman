@@ -4,5 +4,5 @@ idf_component_register(
         "pacman_game.c"
         "lcd_driver.c"
     INCLUDE_DIRS "."
-    REQUIRES esp_adc esp_driver_spi esp_driver_gpio nvs_flash
+    REQUIRES esp_adc esp_driver_spi esp_driver_gpio nvs_flash app_update
 )

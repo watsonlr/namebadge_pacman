@@ -167,6 +167,16 @@ static void lcd_data_bytes(const uint8_t *data, int len) {
 esp_err_t lcd_init(void) {
     ESP_LOGI(TAG, "Initialising ILI9341 LCD");
 
+    // Pre-assert RST LOW before gpio_config.  GPIO 1 (RST) is an LP pad that
+    // can retain its output-HIGH state through esp_restart().  Writing the
+    // output register to 0 here ensures it drives LOW the moment gpio_config
+    // enables the output driver, so the ILI9341 is in hardware reset during
+    // the entire SPI bus init.  This prevents a CS glitch from spi_bus_add_device
+    // (GPIO 0 transitioning from input to output) being interpreted as a command
+    // while the panel is live — which is what causes display orientation to be
+    // wrong when booting from an OTA slot.
+    gpio_set_level(PIN_RST, 0);
+
     // GPIO for DC and RST
     gpio_config_t io = {
         .pin_bit_mask = (1ULL << PIN_DC) | (1ULL << PIN_RST),
@@ -194,11 +204,10 @@ esp_err_t lcd_init(void) {
     };
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &s_spi));
 
-    // Hardware reset
-    gpio_set_level(PIN_RST, 0);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Release hardware reset (RST has been LOW since before SPI init above)
+    vTaskDelay(pdMS_TO_TICKS(10));    // ILI9341 min RST low hold = 10 µs
     gpio_set_level(PIN_RST, 1);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(150));   // post-reset stabilisation
 
     // Initialisation sequence
     lcd_cmd(CMD_SWRESET);
