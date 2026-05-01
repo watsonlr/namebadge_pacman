@@ -3,9 +3,8 @@
  * @brief Classic Pac-Man — BYUI e-Badge V4.0
  *
  * Maze: 28×28 tiles, 8×8 px each.
- * MADCTL=0x40 on ILI9341 means physical x=0 is the RIGHT edge of the screen
- * (MX=1 mirrors the column address order), so tile_px() mirrors the column
- * coordinate to compensate.
+ * MADCTL=0x60 (MX=1, MV=1): same as badge OS — CASET drives y, PASET drives x.
+ * tile_px() uses a direct left-to-right mapping (col=0 → physical left).
  * Movement: tile-based (one step per MOVE_INTERVAL frames).
  */
 
@@ -172,10 +171,8 @@ static adc_oneshot_unit_handle_t s_adc1;
 #define BI_B     5
 
 // ── Coordinate helpers ────────────────────────────────────────────────────────
-// MADCTL=0x40 (MX=1) mirrors the x-axis (x=0 is physical RIGHT edge).
-// Flip column so col=0 renders on the physical LEFT and RIGHT button moves right.
 static inline int tile_px(int col) {
-    return SCREEN_W - MAZE_X - (col + 1) * TILE_SIZE;
+    return MAZE_X + col * TILE_SIZE;
 }
 static inline int tile_py(int row) {
     return MAZE_Y + row * TILE_SIZE;
@@ -244,8 +241,6 @@ static void draw_maze(void) {
 }
 
 // Draw Pac-Man with mouth wedge facing direction of travel.
-// Because tile_px() mirrors x, DIR_LEFT/RIGHT cases are swapped so the mouth
-// visually faces the direction of physical movement.
 static void draw_pacman(int col, int row, Dir dir, int anim_frame) {
     int px = tile_px(col);
     int py = tile_py(row);
@@ -256,14 +251,13 @@ static void draw_pacman(int col, int row, Dir dir, int anim_frame) {
     lcd_fill_rect(px + 1, py + 7, 6, 1, COLOR_YELLOW);
 
     if (anim_frame == 0) {
-        // Mouth open — swap LEFT/RIGHT to compensate for x-mirror
         switch (dir) {
-            case DIR_LEFT:   // physically moves RIGHT → mouth on right side of tile
+            case DIR_RIGHT:  // mouth on right side of tile
                 lcd_fill_rect(px + 4, py + 2, 4, 1, COLOR_BLACK);
                 lcd_fill_rect(px + 3, py + 3, 5, 2, COLOR_BLACK);
                 lcd_fill_rect(px + 4, py + 5, 4, 1, COLOR_BLACK);
                 break;
-            case DIR_RIGHT:  // physically moves LEFT → mouth on left side of tile
+            case DIR_LEFT:   // mouth on left side of tile
                 lcd_fill_rect(px + 0, py + 2, 4, 1, COLOR_BLACK);
                 lcd_fill_rect(px + 0, py + 3, 5, 2, COLOR_BLACK);
                 lcd_fill_rect(px + 0, py + 5, 4, 1, COLOR_BLACK);

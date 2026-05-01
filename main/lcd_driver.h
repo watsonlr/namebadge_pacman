@@ -3,7 +3,7 @@
  * @brief ILI9341 LCD display driver - namebadge_tetris
  * Hardware: BYUI e-Badge V3.0 (ESP32-S3-Mini-1-N4R2)
  * Display:  ILI9341 240x320 native, mounted landscape (320x240)
- * MADCTL:   0x40 (MX=1) — landscape, FPC connector on left
+ * MADCTL:   0x60 (MX=1, MV=1) — landscape, matches badge OS
  * RGB565:   big-endian over SPI (high byte first)
  */
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# publish.sh — copy Pacman flash binaries to the org Pages repo,
+# publish.sh — build Pacman, copy binaries to the org Pages repo,
 # update manifest.json for both webflash (multi-binary) and OTA (single url).
 set -e
 
@@ -46,22 +46,20 @@ do
     fi
 done
 
-# ── Sanity checks ────────────────────────────────────────────────────────────
+# ── Build ─────────────────────────────────────────────────────────────────────
+echo "Building Pacman..."
+source /home/lynn/esp/esp-idf/export.sh 2>/dev/null
+idf.py -C "${SCRIPT_DIR}" build
+
+# ── Sanity checks ─────────────────────────────────────────────────────────────
 for f in "$APP_BIN" "$BL_BIN" "$PT_BIN"; do
     if [[ ! -f "$f" ]]; then
         echo "ERROR: binary not found at ${f}"
-        echo "       Run 'idf.py build' first."
         exit 1
     fi
 done
 
-if [[ ! -d "${PAGES_REPO}/.git" ]]; then
-    echo "ERROR: Pages repo not found at ${PAGES_REPO}"
-    echo "       Run: git clone git@github.com:BYU-I-eBadge/byu-i-ebadge.github.io.git ${PAGES_REPO}"
-    exit 1
-fi
-
-# ── Pull latest before making changes ────────────────────────────────────────
+# ── Pull latest before making changes ─────────────────────────────────────────
 git -C "${PAGES_REPO}" pull
 
 # ── Copy binaries ─────────────────────────────────────────────────────────────
@@ -69,9 +67,9 @@ mkdir -p "${DEST}"
 cp "${APP_BIN}" "${DEST}/${APP_DEST_NAME}"
 cp "${BL_BIN}"  "${DEST}/${BL_DEST_NAME}"
 cp "${PT_BIN}"  "${DEST}/${PT_DEST_NAME}"
-echo "Copied ${APP_DEST_NAME}  (factory app,        0x10000)"
-echo "Copied ${BL_DEST_NAME}   (ESP-IDF bootloader, 0x1000)"
-echo "Copied ${PT_DEST_NAME}   (partition table,    0x8000)"
+echo "Copied ${APP_DEST_NAME}    (app,               0x10000)"
+echo "Copied ${BL_DEST_NAME} (ESP-IDF bootloader, 0x0)"
+echo "Copied ${PT_DEST_NAME} (partition table,    0x8000)"
 
 if [[ -n "$ICON_SRC" ]]; then
     cp "${ICON_SRC}" "${DEST}/${ICON_DEST_NAME}"
@@ -96,7 +94,6 @@ except (FileNotFoundError, json.JSONDecodeError):
 if "apps" not in m:
     m["apps"] = []
 
-# Find existing version so we can bump it
 old_ver = 0
 for app in m["apps"]:
     if app.get("name") == "${APP_NAME}":
@@ -107,8 +104,8 @@ new_ver = old_ver + 1
 icon_url = "${GITHUB_PAGES_BASE}/${ICON_DEST_NAME}" if "${ICON_SRC}" else ""
 
 # Entry satisfies both consumers:
-#   webflash site  → reads "binaries" (bl + pt + app at their flash addresses)
-#   badge OTA menu → reads "url" / "size" / "sha256" (app binary only, OTA slot)
+#   webflash site  → reads "binaries" (bl + pt + ota_data + app at their flash addresses)
+#   badge OTA menu → reads "url" / "size" / "sha256" (app binary only, streamed to OTA slot)
 new_entry = {
     "name": "${APP_NAME}",
     "version": new_ver,
@@ -116,7 +113,7 @@ new_entry = {
     "size": ${APP_SIZE},
     "sha256": "${APP_SHA256}",
     "binaries": [
-        {"url": "${GITHUB_PAGES_BASE}/${BL_DEST_NAME}",  "address": 0x1000},
+        {"url": "${GITHUB_PAGES_BASE}/${BL_DEST_NAME}",  "address": 0x0},
         {"url": "${GITHUB_PAGES_BASE}/${PT_DEST_NAME}",  "address": 0x8000},
         {"url": "${GITHUB_PAGES_BASE}/${APP_DEST_NAME}", "address": 0x10000},
     ],
@@ -153,7 +150,7 @@ git add apps/
 git commit -m "Update Pacman ($(date '+%Y-%m-%d %H:%M'))
 
 App:        ${APP_DEST_NAME} (${APP_SIZE} bytes, 0x10000)  sha256=${APP_SHA256}
-Bootloader: ${BL_DEST_NAME} (0x1000)
+Bootloader: ${BL_DEST_NAME} (0x0)
 Partitions: ${PT_DEST_NAME} (0x8000)"
 git push
 

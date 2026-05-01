@@ -4,7 +4,7 @@
  *
  * Display: ILI9341, 240x320 native, mounted landscape (FPC connector on left)
  * Interface: SPI2 @ 40 MHz, write-only (no MISO)
- * Orientation: MADCTL 0x40 (MX=1) — landscape 320×240
+ * Orientation: MADCTL 0x60 (MX=1, MV=1) — landscape 320×240
  * Inversion: INVON (0x21) required — panel powers up inverted by default
  *
  * RGB565 byte order: BIG-ENDIAN  (send high byte first, low byte second)
@@ -204,7 +204,11 @@ esp_err_t lcd_init(void) {
     };
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &s_spi));
 
-    // Release hardware reset (RST has been LOW since before SPI init above)
+    // Explicit RST LOW after SPI init — mirrors badge OS display driver.
+    // The pre-load above keeps RST LOW on a cold boot; this explicit pulse
+    // ensures RST is definitively LOW when booting from an OTA slot, where
+    // gpio_config() may have briefly released the pin during reconfiguration.
+    gpio_set_level(PIN_RST, 0);
     vTaskDelay(pdMS_TO_TICKS(10));    // ILI9341 min RST low hold = 10 µs
     gpio_set_level(PIN_RST, 1);
     vTaskDelay(pdMS_TO_TICKS(150));   // post-reset stabilisation
@@ -220,12 +224,12 @@ esp_err_t lcd_init(void) {
     { uint8_t d = 0x55; lcd_data_bytes(&d, 1); }
 
 
-    // Landscape: MY=1, MV=1, BGR=1 (0xA8) — x=0 at physical RIGHT edge
-    // (compensated by tile_px mirror in game code)
+    // Landscape: MX=1, MV=1 (0x60) — matches badge OS MADCTL exactly.
+    // CASET drives y (0..239), PASET drives x (0..319) in this orientation.
     lcd_cmd(CMD_MADCTL);
-    { uint8_t d = 0xA8; lcd_data_bytes(&d, 1); }
+    { uint8_t d = 0x60; lcd_data_bytes(&d, 1); }
 
-    // Panel powers up inverted by default — send INVON for correct colours
+    // Panel powers up inverted — INVON required for correct colours (same as badge OS).
     lcd_cmd(CMD_INVON);
 
     lcd_cmd(CMD_DISPON);
@@ -238,12 +242,14 @@ esp_err_t lcd_init(void) {
 void lcd_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
     uint8_t d[4];
 
+    /* With MADCTL=0x60 (MX=1, MV=1): CASET drives y (short axis 0..239),
+     * PASET drives x (long axis 0..319).  Matches badge OS set_window. */
     lcd_cmd(CMD_CASET);
-    d[0] = x0 >> 8; d[1] = x0 & 0xFF; d[2] = x1 >> 8; d[3] = x1 & 0xFF;
+    d[0] = y0 >> 8; d[1] = y0 & 0xFF; d[2] = y1 >> 8; d[3] = y1 & 0xFF;
     lcd_data_bytes(d, 4);
 
     lcd_cmd(CMD_PASET);
-    d[0] = y0 >> 8; d[1] = y0 & 0xFF; d[2] = y1 >> 8; d[3] = y1 & 0xFF;
+    d[0] = x0 >> 8; d[1] = x0 & 0xFF; d[2] = x1 >> 8; d[3] = x1 & 0xFF;
     lcd_data_bytes(d, 4);
 
     lcd_cmd(CMD_RAMWR);
