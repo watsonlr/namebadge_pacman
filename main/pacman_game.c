@@ -789,10 +789,25 @@ static void render_level_complete(void) {
                 lcd_fill_rect(tile_px(co), tile_py(r), TILE_SIZE, TILE_SIZE, c);
 }
 
+// ── Orientation diagnostic (v9) ──────────────────────────────────────────────
+// Shows a 3-second colour cross so we can read orientation from what the
+// user reports seeing.  Correct landscape result:
+//   TOP  = RED, BOTTOM = BLUE, LEFT = GREEN, RIGHT = YELLOW, CENTRE = BLACK
+static void orientation_test(void) {
+    lcd_fill_screen(0x0000);                           // black background
+    lcd_fill_rect(  0,   0, 320,  30, 0xF800);        // TOP   — RED
+    lcd_fill_rect(  0, 210, 320,  30, 0x001F);        // BOTTOM — BLUE
+    lcd_fill_rect(  0,  30,  30, 180, 0x07E0);        // LEFT  — GREEN
+    lcd_fill_rect(290,  30,  30, 180, 0xFFE0);        // RIGHT — YELLOW
+    lcd_draw_string(130, 110, "v9", 0xFFFF, 0x0000);  // "v9" in centre
+    vTaskDelay(pdMS_TO_TICKS(3000));
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 esp_err_t pacman_init(void) {
     esp_err_t err = lcd_init();
     if (err != ESP_OK) return err;
+    orientation_test();
     input_init();
     g_hiscore = 0;
     g_state   = ST_TITLE;
