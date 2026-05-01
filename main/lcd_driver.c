@@ -149,16 +149,29 @@ static const uint8_t font8x8[96][8] = {
 
 // ── Low-level helpers ────────────────────────────────────────────────────────
 
+// DC-pin callback: sets DC atomically before CS asserts, matching badge OS.
+// t->user == 0 → command (DC low); t->user == 1 → data (DC high).
+static void IRAM_ATTR spi_pre_transfer_cb(spi_transaction_t *t) {
+    gpio_set_level(PIN_DC, (int)(intptr_t)t->user);
+}
+
 static void lcd_cmd(uint8_t cmd) {
-    gpio_set_level(PIN_DC, 0);
-    spi_transaction_t t = { .length = 8, .tx_buffer = &cmd };
+    spi_transaction_t t = {
+        .length  = 8,
+        .tx_data = {cmd},
+        .flags   = SPI_TRANS_USE_TXDATA,
+        .user    = (void *)0,   // DC LOW (command)
+    };
     spi_device_polling_transmit(s_spi, &t);
 }
 
 static void lcd_data_bytes(const uint8_t *data, int len) {
     if (len == 0) return;
-    gpio_set_level(PIN_DC, 1);
-    spi_transaction_t t = { .length = (size_t)len * 8, .tx_buffer = data };
+    spi_transaction_t t = {
+        .length    = (size_t)len * 8,
+        .tx_buffer = data,
+        .user      = (void *)1, // DC HIGH (data)
+    };
     spi_device_polling_transmit(s_spi, &t);
 }
 
@@ -167,22 +180,28 @@ static void lcd_data_bytes(const uint8_t *data, int len) {
 esp_err_t lcd_init(void) {
     ESP_LOGI(TAG, "Initialising ILI9341 LCD");
 
-    // Pre-assert RST LOW before gpio_config.  GPIO 1 (RST) is an LP pad that
-    // can retain its output-HIGH state through esp_restart().  Writing the
-    // output register to 0 here ensures it drives LOW the moment gpio_config
-    // enables the output driver, so the ILI9341 is in hardware reset during
-    // the entire SPI bus init.  This prevents a CS glitch from spi_bus_add_device
-    // (GPIO 0 transitioning from input to output) being interpreted as a command
-    // while the panel is live — which is what causes display orientation to be
-    // wrong when booting from an OTA slot.
+    // Configure RST ALONE first, pre-loaded to LOW.  Matches badge OS
+    // display_init() which configures RST separately before anything else.
+    // RST must be LOW while the SPI bus and CS pin are being initialised so
+    // the ILI9341 ignores any CS glitch that spi_bus_add_device produces when
+    // it reconfigures GPIO 0 from input to output.
     gpio_set_level(PIN_RST, 0);
-
-    // GPIO for DC and RST
-    gpio_config_t io = {
-        .pin_bit_mask = (1ULL << PIN_DC) | (1ULL << PIN_RST),
+    gpio_config_t rst_cfg = {
+        .pin_bit_mask = (1ULL << PIN_RST),
         .mode         = GPIO_MODE_OUTPUT,
     };
-    gpio_config(&io);
+    gpio_config(&rst_cfg);
+
+    // Configure DC ALONE, pre-loaded to LOW (command mode).  Matches badge OS
+    // spi_and_gpio_init() which explicitly pre-loads DC before gpio_config so
+    // the output driver starts in a known state regardless of any LP-pad latch
+    // retained from a prior badge OS session.
+    gpio_set_level(PIN_DC, 0);
+    gpio_config_t dc_cfg = {
+        .pin_bit_mask = (1ULL << PIN_DC),
+        .mode         = GPIO_MODE_OUTPUT,
+    };
+    gpio_config(&dc_cfg);
 
     // SPI bus
     spi_bus_config_t bus = {
@@ -195,45 +214,54 @@ esp_err_t lcd_init(void) {
     };
     ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO));
 
-    // SPI device
+    // SPI device — pre_cb sets DC atomically before CS asserts, identical to
+    // badge OS.  Without pre_cb, a manual gpio_set_level + polling_transmit
+    // allows CS to assert before DC is stable on early silicon.
     spi_device_interface_config_t dev = {
-        .clock_speed_hz = 40 * 1000 * 1000,   // 40 MHz
+        .clock_speed_hz = 40 * 1000 * 1000,
         .mode           = 0,
         .spics_io_num   = PIN_CS,
         .queue_size     = 7,
+        .pre_cb         = spi_pre_transfer_cb,
     };
     ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &dev, &s_spi));
 
-    // Explicit RST LOW after SPI init — mirrors badge OS display driver.
-    // The pre-load above keeps RST LOW on a cold boot; this explicit pulse
-    // ensures RST is definitively LOW when booting from an OTA slot, where
-    // gpio_config() may have briefly released the pin during reconfiguration.
-    gpio_set_level(PIN_RST, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));    // ILI9341 min RST low hold = 10 µs
+    // RST has been LOW since before SPI init (display in hardware reset).
+    // Hold for the ILI9341 minimum (10 µs), then release and stabilise.
+    vTaskDelay(pdMS_TO_TICKS(10));
     gpio_set_level(PIN_RST, 1);
-    vTaskDelay(pdMS_TO_TICKS(150));   // post-reset stabilisation
-
-    // Initialisation sequence
-    lcd_cmd(CMD_SWRESET);
     vTaskDelay(pdMS_TO_TICKS(150));
-    lcd_cmd(CMD_SLPOUT);
-    vTaskDelay(pdMS_TO_TICKS(500));
 
-    // 16-bit RGB565 colour mode
-    lcd_cmd(CMD_COLMOD);
-    { uint8_t d = 0x55; lcd_data_bytes(&d, 1); }
+    // Full initialisation sequence — exact copy of badge OS ili9341_init_regs().
+    // The vendor-specific registers (0xEF, 0xCF, …) are required on this panel;
+    // a minimal SWRESET+SLPOUT+MADCTL sequence is insufficient.
+    lcd_cmd(0x01); vTaskDelay(pdMS_TO_TICKS(150)); // SWRESET
 
+    { uint8_t d[] = {0x03,0x80,0x02}; lcd_cmd(0xEF); lcd_data_bytes(d, 3); }
+    { uint8_t d[] = {0x00,0xC1,0x30}; lcd_cmd(0xCF); lcd_data_bytes(d, 3); }
+    { uint8_t d[] = {0x64,0x03,0x12,0x81}; lcd_cmd(0xED); lcd_data_bytes(d, 4); }
+    { uint8_t d[] = {0x85,0x00,0x78}; lcd_cmd(0xE8); lcd_data_bytes(d, 3); }
+    { uint8_t d[] = {0x39,0x2C,0x00,0x34,0x02}; lcd_cmd(0xCB); lcd_data_bytes(d, 5); }
+    { uint8_t d[] = {0x20}; lcd_cmd(0xF7); lcd_data_bytes(d, 1); }
+    { uint8_t d[] = {0x00,0x00}; lcd_cmd(0xEA); lcd_data_bytes(d, 2); }
+    { uint8_t d[] = {0x23}; lcd_cmd(0xC0); lcd_data_bytes(d, 1); } // power control 1
+    { uint8_t d[] = {0x10}; lcd_cmd(0xC1); lcd_data_bytes(d, 1); } // power control 2
+    { uint8_t d[] = {0x3E,0x28}; lcd_cmd(0xC5); lcd_data_bytes(d, 2); } // VCOM
+    { uint8_t d[] = {0x86}; lcd_cmd(0xC7); lcd_data_bytes(d, 1); }
+    { uint8_t d[] = {0x55}; lcd_cmd(0x3A); lcd_data_bytes(d, 1); } // 16-bit colour
+    { uint8_t d[] = {0x00,0x18}; lcd_cmd(0xB1); lcd_data_bytes(d, 2); } // frame rate ~70 Hz
+    { uint8_t d[] = {0x08,0x82,0x27}; lcd_cmd(0xB6); lcd_data_bytes(d, 3); }
+    { uint8_t d[] = {0x00}; lcd_cmd(0xF2); lcd_data_bytes(d, 1); }
+    { uint8_t d[] = {0x01}; lcd_cmd(0x26); lcd_data_bytes(d, 1); }
+    { uint8_t d[] = {0x0F,0x31,0x2B,0x0C,0x0E,0x08,0x4E,0xF1,0x37,0x07,0x10,0x03,0x0E,0x09,0x00};
+      lcd_cmd(0xE0); lcd_data_bytes(d, 15); }
+    { uint8_t d[] = {0x00,0x0E,0x14,0x03,0x11,0x07,0x31,0xC1,0x48,0x08,0x0F,0x0C,0x31,0x36,0x0F};
+      lcd_cmd(0xE1); lcd_data_bytes(d, 15); }
 
-    // Landscape: MX=1, MV=1 (0x60) — matches badge OS MADCTL exactly.
-    // CASET drives y (0..239), PASET drives x (0..319) in this orientation.
-    lcd_cmd(CMD_MADCTL);
-    { uint8_t d = 0x60; lcd_data_bytes(&d, 1); }
-
-    // Panel powers up inverted — INVON required for correct colours (same as badge OS).
-    lcd_cmd(CMD_INVON);
-
-    lcd_cmd(CMD_DISPON);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    lcd_cmd(0x11); vTaskDelay(pdMS_TO_TICKS(120)); // SLPOUT
+    { uint8_t d[] = {0x60}; lcd_cmd(0x36); lcd_data_bytes(d, 1); } // MADCTL: MX=1,MV=1 landscape
+    lcd_cmd(0x21);                                                   // INVON
+    lcd_cmd(0x29);                                                   // DISPON
 
     ESP_LOGI(TAG, "LCD ready");
     return ESP_OK;
@@ -277,8 +305,8 @@ void lcd_fill_rect(int x, int y, int w, int h, uint16_t color) {
 
     lcd_set_window((uint16_t)x, (uint16_t)y,
                    (uint16_t)(x + w - 1), (uint16_t)(y + h - 1));
-    gpio_set_level(PIN_DC, 1);
-    spi_transaction_t t = { .length = (size_t)row_bytes * 8, .tx_buffer = s_line_buf };
+    spi_transaction_t t = { .length = (size_t)row_bytes * 8, .tx_buffer = s_line_buf,
+                             .user = (void *)1 };  // pre_cb → DC HIGH (data)
     for (int row = 0; row < h; row++) {
         spi_device_polling_transmit(s_spi, &t);
     }
